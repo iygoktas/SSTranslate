@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+.venv/
+
+# IDE specific folders
+.idea/
+.vscode/
+
+# Sensitive information - DO NOT UPLOAD!
+.env
+
+# PyInstaller build files
+dist/
+build/
+*.spec
