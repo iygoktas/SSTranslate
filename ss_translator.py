@@ -1,4 +1,3 @@
-# === GÜNCELLEME 2: TAŞINABİLİR VE YENİDEN BOYUTLANDIRILABİLİR PENCERE ===
 import sys
 import threading
 import deepl
@@ -18,9 +17,7 @@ from pynput import keyboard
 from PIL import Image
 import pytesseract
 
-# --- Ayar Yönetimi ---
 CONFIG_FILE = 'config.json'
-# Varsayılan ayarlar (artık boyut bilgisi yok)
 DEFAULT_CONFIG = {
     'source_lang': 'Auto', 
     'target_lang': 'TR'
@@ -41,7 +38,6 @@ def save_config(config_data):
 
 app_config = load_config()
 
-# --- Sadeleştirilmiş Kontrol Paneli ---
 class MainWindow(QWidget):
     def __init__(self, icon_path):
         super().__init__()
@@ -57,7 +53,6 @@ class MainWindow(QWidget):
         lang_group_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         main_layout.addWidget(lang_group_label)
         
-        # Dil Ayarları (Aynı kaldı)
         source_lang_layout = QHBoxLayout(); source_lang_label = QLabel("Source Language:"); self.source_lang_combo = QComboBox(); self.source_lang_combo.addItems(SUPPORTED_LANGUAGES.keys())
         current_source_lang_code = app_config.get('source_lang', DEFAULT_CONFIG['source_lang']); current_source_lang_name = next((name for name, code in SUPPORTED_LANGUAGES.items() if code == current_source_lang_code), "Auto-Detect"); self.source_lang_combo.setCurrentText(current_source_lang_name)
         source_lang_layout.addWidget(source_lang_label); source_lang_layout.addWidget(self.source_lang_combo); main_layout.addLayout(source_lang_layout)
@@ -66,7 +61,7 @@ class MainWindow(QWidget):
         current_target_lang_code = app_config.get('target_lang', DEFAULT_CONFIG['target_lang']); current_target_lang_name = next((name for name, code in SUPPORTED_LANGUAGES.items() if code == current_target_lang_code), "Turkish"); self.target_lang_combo.setCurrentText(current_target_lang_name)
         target_lang_layout.addWidget(target_lang_label); target_lang_layout.addWidget(self.target_lang_combo); main_layout.addLayout(target_lang_layout)
 
-        main_layout.addStretch() # Araya boşluk ekler
+        main_layout.addStretch()
         
         self.save_button = QPushButton("Save Language Settings")
         self.save_button.clicked.connect(self.save_settings_handler)
@@ -83,7 +78,6 @@ class MainWindow(QWidget):
             save_config(app_config); self.status_label.setText("Language settings saved!"); print("Settings saved:", app_config)
         except Exception as e: self.status_label.setText(f"Error: {e}")
 
-# --- Taşınabilir ve Yeniden Boyutlandırılabilir Çeviri Kutusu ---
 class TranslationOverlay(QWidget):
     def __init__(self, text):
         super().__init__()
@@ -98,13 +92,11 @@ class TranslationOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setMouseTracking(True) # Fare basılı değilken bile hareketini izle
+        self.setMouseTracking(True) 
 
-        # Arayüzü oluştur
         self.setup_ui(text)
 
     def setup_ui(self, text):
-        # Bu kısım öncekiyle aynı, sadece ayrı bir fonksiyona alındı
         container_layout = QVBoxLayout(self)
         container_layout.setContentsMargins(15, 15, 15, 15)
         self.scroll_area = QScrollArea(self)
@@ -118,7 +110,6 @@ class TranslationOverlay(QWidget):
         self.scroll_area.setWidget(self.text_label)
         container_layout.addWidget(self.scroll_area)
     
-    # Boyutlandırma ve taşıma mantığı
     def get_resize_grip_rect(self):
         return QRect(self.width() - 15, self.height() - 15, 15, 15)
 
@@ -151,11 +142,6 @@ class TranslationOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         bg_rect = self.rect(); painter.setBrush(QColor(0, 0, 0, 200)); painter.setPen(Qt.PenStyle.NoPen); painter.drawRoundedRect(bg_rect, 15, 15)
-
-# --- Diğer Sınıflar ve Fonksiyonlar ---
-# ... (Communicator, SnippingWidget, HotkeyListener ve diğer fonksiyonlar tamamen aynı)
-# ...
-# Sadece capture_and_translate güncellenecek
 
 class Communicator(QObject): f8_pressed = pyqtSignal(); esc_pressed = pyqtSignal()
 class SnippingWidget(QWidget):
@@ -195,11 +181,9 @@ def capture_and_translate(rect):
         print(f"Translation ({source_lang} -> {target_lang}): '{translated_text}'")
         if translation_overlay and translation_overlay.isVisible(): translation_overlay.close()
         
-        # Artık boyut bilgisi göndermiyoruz
         translation_overlay = TranslationOverlay(translated_text)
         
-        # Başlangıç boyutunu ve konumunu ayarla
-        translation_overlay.resize(800, 500) # Varsayılan bir başlangıç boyutu
+        translation_overlay.resize(800, 500)
         screen_geometry = QGuiApplication.primaryScreen().geometry()
         x_pos = (screen_geometry.width() - translation_overlay.width()) / 2
         y_pos = (screen_geometry.height() - translation_overlay.height()) / 2
