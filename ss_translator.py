@@ -3,42 +3,141 @@ import threading
 import deepl
 import os
 import ctypes
+import json
 from dotenv import load_dotenv
 
+# .env dosyasındaki değişkenleri yükle
 load_dotenv()
 
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QScrollArea, QVBoxLayout
+from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QScrollArea, QVBoxLayout, 
+                             QHBoxLayout, QLineEdit, QPushButton, QComboBox)
 from PyQt6.QtCore import Qt, QRect, QPoint, QObject, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen, QGuiApplication, QFont, QIcon, QAction
+from PyQt6.QtGui import (QPainter, QColor, QPen, QGuiApplication, QFont, 
+                         QIcon, QAction, QIntValidator)
 from pynput import keyboard
 from PIL import Image
 import pytesseract
 
-# Translation overlay dimensions
-BOX_WIDTH = 800
-BOX_HEIGHT = 500
+# --- Ayar Yönetimi ---
+CONFIG_FILE = 'config.json'
+# Varsayılan ayarlar ve desteklenen diller
+DEFAULT_CONFIG = {
+    'width': 800, 
+    'height': 500, 
+    'source_lang': 'Auto', 
+    'target_lang': 'TR'
+}
+# DeepL API'sinin desteklediği bazı diller (Görünen İsim: API Kodu)
+SUPPORTED_LANGUAGES = {
+    "Auto-Detect": "Auto", "English": "EN", "Turkish": "TR", "German": "DE", 
+    "French": "FR", "Spanish": "ES", "Italian": "IT", "Japanese": "JA", "Russian": "RU"
+}
 
+def load_config():
+    """config.json dosyasından ayarları yükler. Dosya yoksa varsayılanları döndürür."""
+    if not os.path.exists(CONFIG_FILE):
+        return DEFAULT_CONFIG
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return DEFAULT_CONFIG
 
+def save_config(config_data):
+    """Verilen ayarları config.json dosyasına kaydeder."""
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config_data, f, indent=4)
+
+# Uygulama başlarken ayarları yükle
+app_config = load_config()
+
+# --- Geliştirilmiş Kontrol Paneli ---
 class MainWindow(QWidget):
     def __init__(self, icon_path):
         super().__init__()
         
-        # Window settings
-        self.setWindowTitle("SSTranslate Info Panel")
+        self.setWindowTitle("SSTranslate Control Panel")
         self.setWindowIcon(QIcon(icon_path))
-        self.setFixedSize(350, 150)
+        self.setMinimumSize(380, 250)
         
-        layout = QVBoxLayout(self)
-        info_label = QLabel(
-            "Program is running in the background.\n\n"
-            "Press F8 to start a translation.\n"
-            "You can close the pop-up windows with ESC."
-        )
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setFont(QFont("Arial", 10))
-        layout.addWidget(info_label)
+        main_layout = QVBoxLayout(self)
+        
+        # Dil Ayarları
+        lang_group_label = QLabel("Language Settings")
+        lang_group_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        main_layout.addWidget(lang_group_label)
+        
+        source_lang_layout = QHBoxLayout()
+        source_lang_label = QLabel("Source Language:")
+        self.source_lang_combo = QComboBox()
+        self.source_lang_combo.addItems(SUPPORTED_LANGUAGES.keys())
+        current_source_lang_code = app_config.get('source_lang', DEFAULT_CONFIG['source_lang'])
+        current_source_lang_name = next((name for name, code in SUPPORTED_LANGUAGES.items() if code == current_source_lang_code), "Auto-Detect")
+        self.source_lang_combo.setCurrentText(current_source_lang_name)
+        source_lang_layout.addWidget(source_lang_label)
+        source_lang_layout.addWidget(self.source_lang_combo)
+        main_layout.addLayout(source_lang_layout)
 
+        target_lang_layout = QHBoxLayout()
+        target_lang_label = QLabel("Target Language:")
+        self.target_lang_combo = QComboBox()
+        # Hedef dilde "Auto-Detect" olmaz
+        target_langs = {k: v for k, v in SUPPORTED_LANGUAGES.items() if k != "Auto-Detect"}
+        self.target_lang_combo.addItems(target_langs.keys())
+        current_target_lang_code = app_config.get('target_lang', DEFAULT_CONFIG['target_lang'])
+        current_target_lang_name = next((name for name, code in SUPPORTED_LANGUAGES.items() if code == current_target_lang_code), "Turkish")
+        self.target_lang_combo.setCurrentText(current_target_lang_name)
+        target_lang_layout.addWidget(target_lang_label)
+        target_lang_layout.addWidget(self.target_lang_combo)
+        main_layout.addLayout(target_lang_layout)
+        
+        # Boyut Ayarları
+        size_group_label = QLabel("Overlay Size Settings")
+        size_group_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        main_layout.addWidget(size_group_label)
+        
+        size_layout = QHBoxLayout()
+        self.width_input = QLineEdit(str(app_config.get('width')))
+        self.width_input.setValidator(QIntValidator(200, 3840)) # Sadece sayısal değerler
+        self.height_input = QLineEdit(str(app_config.get('height')))
+        self.height_input.setValidator(QIntValidator(100, 2160)) # Sadece sayısal değerler
+        size_layout.addWidget(QLabel("Width:"))
+        size_layout.addWidget(self.width_input)
+        size_layout.addWidget(QLabel("Height:"))
+        size_layout.addWidget(self.height_input)
+        main_layout.addLayout(size_layout)
 
+        # Kaydet Butonu ve Durum
+        self.save_button = QPushButton("Save Settings")
+        self.save_button.clicked.connect(self.save_settings_handler)
+        self.status_label = QLabel("Press F8 to translate.")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.save_button)
+        main_layout.addWidget(self.status_label)
+
+    def save_settings_handler(self):
+        """Kaydet butonuna basıldığında ayarları günceller ve dosyaya yazar."""
+        global app_config
+        try:
+            # Seçilen dillerin API kodlarını al
+            selected_source_lang = self.source_lang_combo.currentText()
+            app_config['source_lang'] = SUPPORTED_LANGUAGES[selected_source_lang]
+            
+            selected_target_lang = self.target_lang_combo.currentText()
+            app_config['target_lang'] = {k: v for k, v in SUPPORTED_LANGUAGES.items() if k != "Auto-Detect"}[selected_target_lang]
+
+            # Boyutları al
+            app_config['width'] = int(self.width_input.text())
+            app_config['height'] = int(self.height_input.text())
+            
+            save_config(app_config)
+            self.status_label.setText("Settings saved successfully!")
+            print("Settings saved:", app_config)
+        except Exception as e:
+            self.status_label.setText(f"Error: Could not save settings.")
+            print(f"Error saving settings: {e}")
+
+# --- Diğer Sınıflar ve Fonksiyonlar ---
 class Communicator(QObject):
     f8_pressed = pyqtSignal()
     esc_pressed = pyqtSignal()
@@ -81,7 +180,6 @@ class TranslationOverlay(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(bg_rect, 15, 15)
 
-
 class SnippingWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -118,12 +216,11 @@ snipping_widget = None
 translation_overlay = None
 
 def capture_and_translate(rect):
-    global translation_overlay
+    global translation_overlay, app_config
     try:
         api_key = os.getenv("DEEPL_API_KEY")
         if not api_key:
             print("ERROR: DEEPL_API_KEY not found in the .env file.")
-            print("Please ensure a .env file exists in the main directory and contains DEEPL_API_KEY='...'")
             return
         
         screenshot = QGuiApplication.primaryScreen().grabWindow(0, rect.x(), rect.y(), rect.width(), rect.height())
@@ -134,6 +231,7 @@ def capture_and_translate(rect):
         image = Image.frombytes("RGBA", (buffer.width(), buffer.height()), image_bytes, "raw", "BGRA").convert("L")
         
         raw_extracted_text = pytesseract.image_to_string(image, lang='eng').strip()
+        
         text_with_preserved_breaks = raw_extracted_text.replace('\n\n', '[P_BREAK]')
         text_single_line = text_with_preserved_breaks.replace('\n', ' ')
         processed_text = text_single_line.replace('[P_BREAK]', '\n\n')
@@ -142,18 +240,31 @@ def capture_and_translate(rect):
         if not processed_text: return
         
         translator = deepl.Translator(api_key)
-        result = translator.translate_text(processed_text, target_lang="TR")
+        
+        # Ayarlardan kaynak ve hedef dili al
+        source_lang = app_config.get('source_lang')
+        target_lang = app_config.get('target_lang')
+        
+        # DeepL'e gönderilecek parametreleri hazırla
+        translate_kwargs = {'target_lang': target_lang}
+        if source_lang and source_lang != 'Auto':
+            translate_kwargs['source_lang'] = source_lang
+            
+        result = translator.translate_text(processed_text, **translate_kwargs)
         translated_text = result.text
 
-        print(f"Translation: '{translated_text}'")
+        print(f"Translation ({source_lang} -> {target_lang}): '{translated_text}'")
         if translation_overlay and translation_overlay.isVisible():
             translation_overlay.close()
         
-        translation_overlay = TranslationOverlay(translated_text, BOX_WIDTH, BOX_HEIGHT)
+        # Ayarlardan kutu boyutlarını al
+        box_width = app_config.get('width')
+        box_height = app_config.get('height')
+        translation_overlay = TranslationOverlay(translated_text, box_width, box_height)
         
         screen_geometry = QGuiApplication.primaryScreen().geometry()
-        x_pos = (screen_geometry.width() - BOX_WIDTH) / 2
-        y_pos = (screen_geometry.height() - BOX_HEIGHT) / 2
+        x_pos = (screen_geometry.width() - box_width) / 2
+        y_pos = (screen_geometry.height() - box_height) / 2
         
         translation_overlay.move(int(x_pos), int(y_pos))
         translation_overlay.show()
@@ -168,6 +279,7 @@ def start_snipping():
     snipping_widget = SnippingWidget()
 
 def close_overlays():
+    global translation_overlay, snipping_widget
     if translation_overlay and translation_overlay.isVisible():
         print("Translation overlay closed.")
         translation_overlay.close()
@@ -208,8 +320,7 @@ def main():
     hotkey_thread = HotkeyListener(communicator)
     hotkey_thread.start()
     
-    print("Info Panel opened. The program is running.")
-    
+    print("Control Panel opened. Program is running.")
     sys.exit(app.exec())
 
 
