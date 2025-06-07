@@ -14,6 +14,18 @@ from pynput import keyboard
 from PIL import Image
 import pytesseract
 
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.realpath(__file__))
+    return os.path.join(base_path, relative_path)
+
+tesseract_path = resource_path(os.path.join("Tesseract-OCR", "tesseract.exe"))
+if os.path.exists(tesseract_path):
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+else:
+    print(f"HATA: Tesseract.exe beklenen yolda bulunamadı: {tesseract_path}")
 CONFIG_FILE = 'config.json'
 HISTORY_FILE = 'history.json'
 MAX_HISTORY_ENTRIES = 50
@@ -322,7 +334,7 @@ def main():
     global main_window, communicator
     myappid = 'mycompany.screentranslator.1.0'; ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
-    script_dir = os.path.dirname(os.path.realpath(__file__)); icon_path = os.path.join(script_dir, "icon.ico")
+    icon_path = resource_path("icon.ico")
     communicator = Communicator();
     main_window = MainWindow(icon_path); main_window.show()
     communicator.f8_pressed.connect(start_snipping); communicator.esc_pressed.connect(close_overlays)
