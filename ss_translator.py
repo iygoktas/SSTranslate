@@ -143,14 +143,139 @@ class MainWindow(QWidget):
 
 class Communicator(QObject): f8_pressed = pyqtSignal(); esc_pressed = pyqtSignal(); history_updated = pyqtSignal()
 class TranslationOverlay(QWidget):
+    # Pencere bölgeleri için sabitler (kodun okunabilirliğini artırır)
+    TOP_LEFT, TOP, TOP_RIGHT, LEFT, MOVE, RIGHT, BOTTOM_LEFT, BOTTOM, BOTTOM_RIGHT, NONE = range(10)
+
     def __init__(self, text, width, height):
-        super().__init__(); self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint); self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground); self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating); self.setFixedSize(width, height)
-        container_layout = QVBoxLayout(self); container_layout.setContentsMargins(15, 15, 15, 15); self.scroll_area = QScrollArea(self); self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollBar:vertical { border: none; background: #3c3c3c; width: 10px; margin: 0px; } QScrollBar::handle:vertical { background: #808080; min-height: 20px; border-radius: 5px; }")
-        self.text_label = QLabel(text, self); self.text_label.setFont(QFont("Arial", 14)); self.text_label.setStyleSheet("background: transparent; color: white;"); self.text_label.setWordWrap(True); self.text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.scroll_area.setWidget(self.text_label); container_layout.addWidget(self.scroll_area)
+        super().__init__()
+        self.translated_text = text
+        self.is_moving = False
+        self.is_resizing = False
+        self.resize_margin = 5 # Kenarlardan kaç piksellik alanın tutamaç olacağı
+        self.resize_region = self.NONE
+        
+        self.start_pos = QPoint()
+        self.start_geom = QRect()
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setMouseTracking(True)
+        
+        # Pencereye sabitlenmiş bir boyut yerine, başlangıç boyutu veriyoruz
+        self.resize(width, height)
+        
+        # Arayüz elemanlarını oluştur
+        self.setup_ui(text)
+
+    def setup_ui(self, text):
+        container_layout = QVBoxLayout(self)
+        container_layout.setContentsMargins(15, 15, 15, 15)
+        
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollBar:vertical {border: none; background: #3c3c3c; width: 10px; margin: 0px;} QScrollBar::handle:vertical {background: #808080; min-height: 20px; border-radius: 5px;}")
+        
+        self.text_label = QLabel(text, self)
+        self.text_label.setFont(QFont("Arial", 14))
+        self.text_label.setStyleSheet("background: transparent; color: white;")
+        self.text_label.setWordWrap(True)
+        self.text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        
+        self.scroll_area.setWidget(self.text_label)
+        container_layout.addWidget(self.scroll_area)
+
+        # Panoya Kopyala Butonunu Geri Ekleyelim
+        self.copy_button = QPushButton("Copy Text")
+        self.copy_button.setStyleSheet("""
+            QPushButton { background-color: #555; color: white; border: none; padding: 8px; border-radius: 5px; }
+            QPushButton:hover { background-color: #666; }
+            QPushButton:pressed { background-color: #777; }
+        """)
+        self.copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_button.clicked.connect(self.copy_to_clipboard)
+        container_layout.addWidget(self.copy_button)
+
+    def copy_to_clipboard(self):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.translated_text)
+        print("Text copied to clipboard.")
+        self.copy_button.setText("Copied!")
+        QTimer.singleShot(2000, lambda: self.copy_button.setText("Copy Text"))
+
+    def get_region(self, pos):
+        """Verilen pozisyonun pencerenin hangi bölgesinde olduğunu döndürür."""
+        margin = self.resize_margin
+        on_left = pos.x() >= 0 and pos.x() < margin
+        on_right = pos.x() >= self.width() - margin and pos.x() < self.width()
+        on_top = pos.y() >= 0 and pos.y() < margin
+        on_bottom = pos.y() >= self.height() - margin and pos.y() < self.height()
+
+        if on_top and on_left: return self.TOP_LEFT
+        if on_top and on_right: return self.TOP_RIGHT
+        if on_bottom and on_left: return self.BOTTOM_LEFT
+        if on_bottom and on_right: return self.BOTTOM_RIGHT
+        if on_top: return self.TOP
+        if on_bottom: return self.BOTTOM
+        if on_left: return self.LEFT
+        if on_right: return self.RIGHT
+        return self.MOVE
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.resize_region = self.get_region(event.pos())
+            if self.resize_region != self.MOVE:
+                self.is_resizing = True
+            else:
+                self.is_moving = True
+            self.start_pos = event.globalPosition().toPoint()
+            self.start_geom = self.geometry()
+
+    def mouseMoveEvent(self, event):
+        # Önce imlecin şeklini ayarla
+        if not self.is_resizing and not self.is_moving:
+            region = self.get_region(event.pos())
+            if region in (self.TOP, self.BOTTOM): self.setCursor(Qt.CursorShape.SizeVerCursor)
+            elif region in (self.LEFT, self.RIGHT): self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif region in (self.TOP_LEFT, self.BOTTOM_RIGHT): self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            elif region in (self.TOP_RIGHT, self.BOTTOM_LEFT): self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+            else: self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        # Sonra taşıma veya yeniden boyutlandırma işlemini yap
+        delta = event.globalPosition().toPoint() - self.start_pos
+        new_geom = QRect(self.start_geom)
+
+        if self.is_moving:
+            self.move(new_geom.topLeft() + delta)
+        elif self.is_resizing:
+            if self.resize_region == self.TOP: new_geom.setTop(new_geom.top() + delta.y())
+            elif self.resize_region == self.BOTTOM: new_geom.setBottom(new_geom.bottom() + delta.y())
+            elif self.resize_region == self.LEFT: new_geom.setLeft(new_geom.left() + delta.x())
+            elif self.resize_region == self.RIGHT: new_geom.setRight(new_geom.right() + delta.x())
+            elif self.resize_region == self.TOP_LEFT: new_geom.setTopLeft(new_geom.topLeft() + delta)
+            elif self.resize_region == self.TOP_RIGHT: new_geom.setTopRight(new_geom.topRight() + delta)
+            elif self.resize_region == self.BOTTOM_LEFT: new_geom.setBottomLeft(new_geom.bottomLeft() + delta)
+            elif self.resize_region == self.BOTTOM_RIGHT: new_geom.setBottomRight(new_geom.bottomRight() + delta)
+            
+            # Pencerenin çok küçülmesini engelle
+            if new_geom.width() > 200 and new_geom.height() > 100:
+                self.setGeometry(new_geom)
+
+    def mouseReleaseEvent(self, event):
+        self.is_moving = False
+        self.is_resizing = False
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+    
     def paintEvent(self, event):
-        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing); bg_rect = self.rect(); painter.setBrush(QColor(0, 0, 0, 200)); painter.setPen(Qt.PenStyle.NoPen); painter.drawRoundedRect(bg_rect, 15, 15)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bg_rect = self.rect()
+        painter.setBrush(QColor(0, 0, 0, 200))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(bg_rect, 15, 15)
 class SnippingWidget(QWidget):
     def __init__(self):
         super().__init__(); self.begin = QPoint(); self.end = QPoint(); self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint); self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground); self.setGeometry(QGuiApplication.primaryScreen().geometry()); self.setCursor(Qt.CursorShape.CrossCursor); self.show()
