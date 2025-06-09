@@ -4,6 +4,7 @@ import deepl
 import os
 import ctypes
 import json
+import re # Metin işleme için Regular Expressions modülü
 from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QScrollArea, QVBoxLayout, 
                              QHBoxLayout, QLineEdit, QPushButton, QComboBox, QMessageBox,
                              QTabWidget, QListWidget, QListWidgetItem)
@@ -34,11 +35,8 @@ DEFAULT_CONFIG = {
     'api_key': '', 'source_lang': 'Auto', 'target_lang': 'TR',
     'width': 800, 'height': 500
 }
-
-# === GÜNCELLENMİŞ DİL YAPISI ===
-# Artık her dil için hem DeepL hem de Tesseract kodunu tutuyoruz.
 SUPPORTED_LANGUAGES = {
-    "Auto-Detect": {"deepl": "Auto", "tess": "eng"}, # Otomatik algılamada OCR dili İngilizce olacak
+    "Auto-Detect": {"deepl": "Auto", "tess": "eng"},
     "English":     {"deepl": "EN", "tess": "eng"},
     "Turkish":     {"deepl": "TR", "tess": "tur"},
     "German":      {"deepl": "DE", "tess": "deu"},
@@ -117,7 +115,7 @@ class MainWindow(QWidget):
         self.status_label = QLabel("Press F8 to translate."); self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); settings_layout.addWidget(self.status_label)
     def setup_history_tab(self, tab):
         history_layout = QVBoxLayout(tab); self.history_list_widget = QListWidget(); self.history_list_widget.itemDoubleClicked.connect(self.history_item_clicked)
-        self.history_list_widget.setStyleSheet("QListWidget { border: 1px solid #555; } QListWidget::item { padding: 8px; border-bottom: 1px solid #444; } QListWidget::item:hover { background-color: #2a2a2a; }")
+        self.history_list_widget.setStyleSheet("QListWidget {border: 1px solid #555;} QListWidget::item {padding: 8px; border-bottom: 1px solid #444;} QListWidget::item:hover {background-color: #2a2a2a;}")
         self.history_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); history_layout.addWidget(self.history_list_widget)
         clear_button = QPushButton("Clear History"); clear_button.clicked.connect(self.clear_history); history_layout.addWidget(clear_button)
         self.populate_history_list()
@@ -173,28 +171,30 @@ def capture_and_translate(rect):
         buffer = screenshot.toImage(); image_bits = buffer.bits(); image_bits.setsize(buffer.sizeInBytes()); image_bytes = image_bits.asstring()
         image = Image.frombytes("RGBA", (buffer.width(), buffer.height()), image_bytes, "raw", "BGRA").convert("L")
         
-        # === GÜNCELLENMİŞ OCR DİLİ MANTIĞI ===
         source_lang_deepl_code = app_config.get('source_lang', 'Auto')
-        # DeepL kodundan Tesseract kodunu bul
-        ocr_lang_code = 'eng' # Varsayılan
+        ocr_lang_code = 'eng'
         for lang_name, codes in SUPPORTED_LANGUAGES.items():
             if codes['deepl'] == source_lang_deepl_code:
-                ocr_lang_code = codes['tess']
-                break
-
+                ocr_lang_code = codes['tess']; break
+        
         raw_extracted_text = pytesseract.image_to_string(image, lang=ocr_lang_code).strip()
-        text_with_preserved_breaks = raw_extracted_text.replace('\n\n', '[P_BREAK]'); text_single_line = text_with_preserved_breaks.replace('\n', ' '); processed_text = text_single_line.replace('[P_BREAK]', '\n\n')
+        
+        # === YENİ VE GELİŞMİŞ METİN İŞLEME MANTIĞI ===
+        text_no_hyphens = re.sub(r'-\s*\n\s*', '', raw_extracted_text)
+        text_with_preserved_breaks = text_no_hyphens.replace('\n\n', '[P_BREAK]')
+        text_single_line = text_with_preserved_breaks.replace('\n', ' ')
+        text_normalized_spaces = re.sub(' +', ' ', text_single_line)
+        processed_text = text_normalized_spaces.replace('[P_BREAK]', '\n\n')
+        
         if not processed_text: return
         
         translator = deepl.Translator(api_key)
         target_lang = app_config.get('target_lang')
-        translate_kwargs = {'target_lang': target_lang}
-        if source_lang_deepl_code != 'Auto': translate_kwargs['source_lang'] = source_lang_deepl_code
-            
+        translate_kwargs = {'target_lang': target_lang}; 
+        if source_lang_deepl_code and source_lang_deepl_code != 'Auto': translate_kwargs['source_lang'] = source_lang_deepl_code
         result = translator.translate_text(processed_text, **translate_kwargs); translated_text = result.text
         add_to_history(processed_text, translated_text)
         print(f"Translation ({source_lang_deepl_code} -> {target_lang}): '{translated_text}'")
-        
         if translation_overlay and translation_overlay.isVisible(): translation_overlay.close()
         box_width = app_config.get('width', DEFAULT_CONFIG['width']); box_height = app_config.get('height', DEFAULT_CONFIG['height'])
         translation_overlay = TranslationOverlay(translated_text, box_width, box_height)
