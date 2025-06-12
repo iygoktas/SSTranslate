@@ -4,7 +4,7 @@ import deepl
 import os
 import ctypes
 import json
-import re # Metin işleme için Regular Expressions modülü
+import re
 from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QScrollArea, QVBoxLayout, 
                              QHBoxLayout, QLineEdit, QPushButton, QComboBox, QMessageBox,
                              QTabWidget, QListWidget, QListWidgetItem)
@@ -31,9 +31,9 @@ else:
 CONFIG_FILE = 'config.json'
 HISTORY_FILE = 'history.json'
 MAX_HISTORY_ENTRIES = 50
+# Width ve Height ayarları kaldırıldı
 DEFAULT_CONFIG = {
-    'api_key': '', 'source_lang': 'Auto', 'target_lang': 'TR',
-    'width': 800, 'height': 500
+    'api_key': '', 'source_lang': 'Auto', 'target_lang': 'TR'
 }
 SUPPORTED_LANGUAGES = {
     "Auto-Detect": {"deepl": "Auto", "tess": "eng"},
@@ -115,7 +115,7 @@ class MainWindow(QWidget):
         self.status_label = QLabel("Press F8 to translate."); self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); settings_layout.addWidget(self.status_label)
     def setup_history_tab(self, tab):
         history_layout = QVBoxLayout(tab); self.history_list_widget = QListWidget(); self.history_list_widget.itemDoubleClicked.connect(self.history_item_clicked)
-        self.history_list_widget.setStyleSheet("QListWidget {border: 1px solid #555;} QListWidget::item {padding: 8px; border-bottom: 1px solid #444;} QListWidget::item:hover {background-color: #2a2a2a;}")
+        self.history_list_widget.setStyleSheet("QListWidget {border: 1px solid #555;} QListWidget::item {padding: 8px; border-bottom: 1px solid #444;} QListWidget::item:hover {background-color: #3399ff;} QListWidget::item:selected {background-color: #0078d7;}")
         self.history_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); history_layout.addWidget(self.history_list_widget)
         clear_button = QPushButton("Clear History"); clear_button.clicked.connect(self.clear_history); history_layout.addWidget(clear_button)
         self.populate_history_list()
@@ -124,9 +124,12 @@ class MainWindow(QWidget):
         for entry in translation_history:
             item_widget = HistoryItemWidget(entry['source'], entry['target']); list_item = QListWidgetItem(self.history_list_widget)
             list_item.setSizeHint(item_widget.sizeHint()); self.history_list_widget.addItem(list_item); self.history_list_widget.setItemWidget(list_item, item_widget)
+            list_item.setData(Qt.ItemDataRole.UserRole, entry['target'])
     def history_item_clicked(self, item):
-        widget = self.history_list_widget.itemWidget(item)
-        if widget: clipboard = QApplication.clipboard(); clipboard.setText(widget.target); self.status_label.setText(f"Copied to clipboard!"); print(f"Copied from history: {widget.target}")
+        original_target_text = item.data(Qt.ItemDataRole.UserRole)
+        if original_target_text:
+            clipboard = QApplication.clipboard(); clipboard.setText(original_target_text)
+            self.status_label.setText(f"Copied to clipboard!"); print(f"Copied from history: {original_target_text}")
     def clear_history(self):
         global translation_history
         reply = QMessageBox.question(self, "Clear History", "Are you sure you want to delete all translation history?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
@@ -139,103 +142,55 @@ class MainWindow(QWidget):
             selected_source_lang = self.source_lang_combo.currentText(); app_config['source_lang'] = SUPPORTED_LANGUAGES[selected_source_lang]['deepl']
             selected_target_lang = self.target_lang_combo.currentText(); app_config['target_lang'] = {k: v for k, v in SUPPORTED_LANGUAGES.items() if k != "Auto-Detect"}[selected_target_lang]['deepl']
             save_json(CONFIG_FILE, app_config); self.status_label.setText("Language settings saved!"); print("Settings saved:", app_config)
-        except Exception as e: self.status_label.setText("Error: Could not save settings."); print(f"Error saving settings: {e}")
+        except Exception: self.status_label.setText("Error: Could not save settings.")
 
 class Communicator(QObject): f8_pressed = pyqtSignal(); esc_pressed = pyqtSignal(); history_updated = pyqtSignal()
+
 class TranslationOverlay(QWidget):
-    # Pencere bölgeleri için sabitler (kodun okunabilirliğini artırır)
     TOP_LEFT, TOP, TOP_RIGHT, LEFT, MOVE, RIGHT, BOTTOM_LEFT, BOTTOM, BOTTOM_RIGHT, NONE = range(10)
-
-    def __init__(self, text, width, height):
+    def __init__(self, text):
         super().__init__()
-        self.translated_text = text
-        self.is_moving = False
-        self.is_resizing = False
-        self.resize_margin = 5 # Kenarlardan kaç piksellik alanın tutamaç olacağı
-        self.resize_region = self.NONE
-        
-        self.start_pos = QPoint()
-        self.start_geom = QRect()
-
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.translated_text = text; self.is_moving = False; self.is_resizing = False
+        self.resize_margin = 5; self.resize_region = self.NONE
+        self.start_pos = QPoint(); self.start_geom = QRect()
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground); self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
-        
-        # Pencereye sabitlenmiş bir boyut yerine, başlangıç boyutu veriyoruz
-        self.resize(width, height)
-        
-        # Arayüz elemanlarını oluştur
         self.setup_ui(text)
-
     def setup_ui(self, text):
-        container_layout = QVBoxLayout(self)
-        container_layout.setContentsMargins(15, 15, 15, 15)
-        
-        self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
+        container_layout = QVBoxLayout(self); container_layout.setContentsMargins(15, 15, 15, 15)
+        self.scroll_area = QScrollArea(self); self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollBar:vertical {border: none; background: #3c3c3c; width: 10px; margin: 0px;} QScrollBar::handle:vertical {background: #808080; min-height: 20px; border-radius: 5px;}")
-        
-        self.text_label = QLabel(text, self)
-        self.text_label.setFont(QFont("Arial", 14))
-        self.text_label.setStyleSheet("background: transparent; color: white;")
-        self.text_label.setWordWrap(True)
-        self.text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        
-        self.scroll_area.setWidget(self.text_label)
-        container_layout.addWidget(self.scroll_area)
-
-        # Panoya Kopyala Butonunu Geri Ekleyelim
+        self.text_label = QLabel(text, self); self.text_label.setFont(QFont("Arial", 14)); self.text_label.setStyleSheet("background: transparent; color: white;")
+        self.text_label.setWordWrap(True); self.text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.scroll_area.setWidget(self.text_label); container_layout.addWidget(self.scroll_area)
         self.copy_button = QPushButton("Copy Text")
-        self.copy_button.setStyleSheet("""
-            QPushButton { background-color: #555; color: white; border: none; padding: 8px; border-radius: 5px; }
-            QPushButton:hover { background-color: #666; }
-            QPushButton:pressed { background-color: #777; }
-        """)
-        self.copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_button.clicked.connect(self.copy_to_clipboard)
+        self.copy_button.setStyleSheet("QPushButton { background-color: #555; color: white; border: none; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #666; } QPushButton:pressed { background-color: #777; }")
+        self.copy_button.setCursor(Qt.CursorShape.PointingHandCursor); self.copy_button.clicked.connect(self.copy_to_clipboard)
         container_layout.addWidget(self.copy_button)
-
     def copy_to_clipboard(self):
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.translated_text)
-        print("Text copied to clipboard.")
-        self.copy_button.setText("Copied!")
-        QTimer.singleShot(2000, lambda: self.copy_button.setText("Copy Text"))
-
+        clipboard = QApplication.clipboard(); clipboard.setText(self.translated_text); print("Text copied to clipboard.")
+        self.copy_button.setText("Copied!"); QTimer.singleShot(2000, lambda: self.copy_button.setText("Copy Text"))
     def get_region(self, pos):
-        """Verilen pozisyonun pencerenin hangi bölgesinde olduğunu döndürür."""
-        margin = self.resize_margin
-        on_left = pos.x() >= 0 and pos.x() < margin
-        on_right = pos.x() >= self.width() - margin and pos.x() < self.width()
-        on_top = pos.y() >= 0 and pos.y() < margin
-        on_bottom = pos.y() >= self.height() - margin and pos.y() < self.height()
-
+        margin = self.resize_margin; on_left = 0 <= pos.x() < margin; on_right = self.width() - margin <= pos.x() < self.width()
+        on_top = 0 <= pos.y() < margin; on_bottom = self.height() - margin <= pos.y() < self.height()
         if on_top and on_left: return self.TOP_LEFT
         if on_top and on_right: return self.TOP_RIGHT
         if on_bottom and on_left: return self.BOTTOM_LEFT
         if on_bottom and on_right: return self.BOTTOM_RIGHT
-        if on_top: return self.TOP
+        if on_top: return self.TOP;
         if on_bottom: return self.BOTTOM
         if on_left: return self.LEFT
         if on_right: return self.RIGHT
         return self.MOVE
-
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.copy_button.geometry().contains(event.pos()): return
             self.resize_region = self.get_region(event.pos())
-            if self.resize_region != self.MOVE:
-                self.is_resizing = True
-            else:
-                self.is_moving = True
-            self.start_pos = event.globalPosition().toPoint()
-            self.start_geom = self.geometry()
-
+            if self.resize_region != self.MOVE: self.is_resizing = True
+            else: self.is_moving = True
+            self.start_pos = event.globalPosition().toPoint(); self.start_geom = self.geometry()
     def mouseMoveEvent(self, event):
-        # Önce imlecin şeklini ayarla
         if not self.is_resizing and not self.is_moving:
             region = self.get_region(event.pos())
             if region in (self.TOP, self.BOTTOM): self.setCursor(Qt.CursorShape.SizeVerCursor)
@@ -243,13 +198,9 @@ class TranslationOverlay(QWidget):
             elif region in (self.TOP_LEFT, self.BOTTOM_RIGHT): self.setCursor(Qt.CursorShape.SizeFDiagCursor)
             elif region in (self.TOP_RIGHT, self.BOTTOM_LEFT): self.setCursor(Qt.CursorShape.SizeBDiagCursor)
             else: self.setCursor(Qt.CursorShape.ArrowCursor)
-
-        # Sonra taşıma veya yeniden boyutlandırma işlemini yap
         delta = event.globalPosition().toPoint() - self.start_pos
         new_geom = QRect(self.start_geom)
-
-        if self.is_moving:
-            self.move(new_geom.topLeft() + delta)
+        if self.is_moving: self.move(new_geom.topLeft() + delta)
         elif self.is_resizing:
             if self.resize_region == self.TOP: new_geom.setTop(new_geom.top() + delta.y())
             elif self.resize_region == self.BOTTOM: new_geom.setBottom(new_geom.bottom() + delta.y())
@@ -259,23 +210,13 @@ class TranslationOverlay(QWidget):
             elif self.resize_region == self.TOP_RIGHT: new_geom.setTopRight(new_geom.topRight() + delta)
             elif self.resize_region == self.BOTTOM_LEFT: new_geom.setBottomLeft(new_geom.bottomLeft() + delta)
             elif self.resize_region == self.BOTTOM_RIGHT: new_geom.setBottomRight(new_geom.bottomRight() + delta)
-            
-            # Pencerenin çok küçülmesini engelle
-            if new_geom.width() > 200 and new_geom.height() > 100:
-                self.setGeometry(new_geom)
-
+            if new_geom.width() > 200 and new_geom.height() > 100: self.setGeometry(new_geom)
     def mouseReleaseEvent(self, event):
-        self.is_moving = False
-        self.is_resizing = False
-        self.setCursor(Qt.CursorShape.ArrowCursor)
-    
+        self.is_moving = False; self.is_resizing = False; self.setCursor(Qt.CursorShape.ArrowCursor)
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        bg_rect = self.rect()
-        painter.setBrush(QColor(0, 0, 0, 200))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(bg_rect, 15, 15)
+        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bg_rect = self.rect(); painter.setBrush(QColor(0, 0, 0, 200)); painter.setPen(Qt.PenStyle.NoPen); painter.drawRoundedRect(bg_rect, 15, 15)
+
 class SnippingWidget(QWidget):
     def __init__(self):
         super().__init__(); self.begin = QPoint(); self.end = QPoint(); self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint); self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground); self.setGeometry(QGuiApplication.primaryScreen().geometry()); self.setCursor(Qt.CursorShape.CrossCursor); self.show()
@@ -286,6 +227,7 @@ class SnippingWidget(QWidget):
     def mousePressEvent(self, event): self.begin = event.pos(); self.end = event.pos(); self.update()
     def mouseMoveEvent(self, event): self.end = event.pos(); self.update()
     def mouseReleaseEvent(self, event): self.close(); capture_and_translate(QRect(self.begin, self.end).normalized())
+
 snipping_widget = None; translation_overlay = None; main_window = None; communicator = None
 
 def capture_and_translate(rect):
@@ -295,36 +237,31 @@ def capture_and_translate(rect):
         screenshot = QGuiApplication.primaryScreen().grabWindow(0, rect.x(), rect.y(), rect.width(), rect.height())
         buffer = screenshot.toImage(); image_bits = buffer.bits(); image_bits.setsize(buffer.sizeInBytes()); image_bytes = image_bits.asstring()
         image = Image.frombytes("RGBA", (buffer.width(), buffer.height()), image_bytes, "raw", "BGRA").convert("L")
-        
         source_lang_deepl_code = app_config.get('source_lang', 'Auto')
         ocr_lang_code = 'eng'
         for lang_name, codes in SUPPORTED_LANGUAGES.items():
-            if codes['deepl'] == source_lang_deepl_code:
-                ocr_lang_code = codes['tess']; break
-        
+            if codes['deepl'] == source_lang_deepl_code: ocr_lang_code = codes['tess']; break
         raw_extracted_text = pytesseract.image_to_string(image, lang=ocr_lang_code).strip()
-        
-        # === YENİ VE GELİŞMİŞ METİN İŞLEME MANTIĞI ===
         text_no_hyphens = re.sub(r'-\s*\n\s*', '', raw_extracted_text)
-        text_with_preserved_breaks = text_no_hyphens.replace('\n\n', '[P_BREAK]')
-        text_single_line = text_with_preserved_breaks.replace('\n', ' ')
-        text_normalized_spaces = re.sub(' +', ' ', text_single_line)
-        processed_text = text_normalized_spaces.replace('[P_BREAK]', '\n\n')
-        
+        text_with_preserved_breaks = text_no_hyphens.replace('\n\n', '[P_BREAK]'); text_single_line = text_with_preserved_breaks.replace('\n', ' ')
+        text_normalized_spaces = re.sub(' +', ' ', text_single_line); processed_text = text_normalized_spaces.replace('[P_BREAK]', '\n\n')
         if not processed_text: return
-        
         translator = deepl.Translator(api_key)
-        target_lang = app_config.get('target_lang')
-        translate_kwargs = {'target_lang': target_lang}; 
+        target_lang = app_config.get('target_lang'); translate_kwargs = {'target_lang': target_lang}; 
         if source_lang_deepl_code and source_lang_deepl_code != 'Auto': translate_kwargs['source_lang'] = source_lang_deepl_code
         result = translator.translate_text(processed_text, **translate_kwargs); translated_text = result.text
-        add_to_history(processed_text, translated_text)
-        print(f"Translation ({source_lang_deepl_code} -> {target_lang}): '{translated_text}'")
+        add_to_history(processed_text, translated_text); print(f"Translation ({source_lang_deepl_code} -> {target_lang}): '{translated_text}'")
         if translation_overlay and translation_overlay.isVisible(): translation_overlay.close()
-        box_width = app_config.get('width', DEFAULT_CONFIG['width']); box_height = app_config.get('height', DEFAULT_CONFIG['height'])
-        translation_overlay = TranslationOverlay(translated_text, box_width, box_height)
+        
+        # Artık boyut bilgisi config'den gelmiyor
+        translation_overlay = TranslationOverlay(translated_text)
+        
+        # Varsayılan bir başlangıç boyutu veriyoruz ve merkeze alıyoruz
+        initial_width = 800; initial_height = 500
+        translation_overlay.resize(initial_width, initial_height)
         screen_geometry = QGuiApplication.primaryScreen().geometry()
-        x_pos = (screen_geometry.width() - box_width) / 2; y_pos = (screen_geometry.height() - box_height) / 2
+        x_pos = (screen_geometry.width() - initial_width) / 2
+        y_pos = (screen_geometry.height() - initial_height) / 2
         translation_overlay.move(int(x_pos), int(y_pos)); translation_overlay.show()
     except deepl.AuthorizationException: QMessageBox.warning(main_window, "Invalid API Key", "The DeepL API Key is invalid or has expired. Please check your key in the API Key Settings.")
     except Exception as e: QMessageBox.critical(main_window, "Unexpected Error", f"An unexpected error occurred: {e}")
